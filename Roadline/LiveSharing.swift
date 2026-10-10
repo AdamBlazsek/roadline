@@ -61,7 +61,7 @@ struct SharingSession: Codable {
     var url: URL { URL(string: LiveSharing.origin + "/#" + id + "." + viewToken)! }
 }
 enum SharingError: LocalizedError {
-    case http(Int), unavailable, secureStorage
+    case http(Int), unavailable, secureStorage, keychain(OSStatus)
     var errorDescription: String? {
         switch self {
         case .http(let code):
@@ -70,6 +70,9 @@ enum SharingError: LocalizedError {
             return "The sharing service returned \(code). Please retry."
         case .unavailable: return "The sharing service is not ready. This is a service issue, not proof that your phone is offline."
         case .secureStorage: return "The sharing key could not be saved securely. Please unlock your phone and retry."
+        case .keychain(let status):
+            if status == errSecMissingEntitlement { return "This app's signature does not enable secure key storage. Re-sign the iPhone app with your Apple account." }
+            return "Secure key storage could not be accessed (\(status)). Unlock your phone and retry."
         }
     }
 }
@@ -92,11 +95,12 @@ enum SharingKeychain {
             let result = SecItemUpdate(query as CFDictionary, values as CFDictionary)
             if result == errSecItemNotFound {
                 var q = query; values.forEach { q[$0.key] = $0.value }
-                guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw SharingError.secureStorage }
-            } else if result != errSecSuccess { throw SharingError.secureStorage }
+                let added = SecItemAdd(q as CFDictionary, nil)
+                guard added == errSecSuccess else { throw SharingError.keychain(added) }
+            } else if result != errSecSuccess { throw SharingError.keychain(result) }
         } else {
             let result = SecItemDelete(query as CFDictionary)
-            guard result == errSecSuccess || result == errSecItemNotFound else { throw SharingError.secureStorage }
+            guard result == errSecSuccess || result == errSecItemNotFound else { throw SharingError.keychain(result) }
         }
     }
     static func token() throws -> String {

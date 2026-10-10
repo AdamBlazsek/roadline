@@ -38,7 +38,7 @@ bash build-ios.sh test
 bash build-ios.sh device
 ```
 
-The second command intentionally creates an unsigned device build for subsequent signing. It does not create a TestFlight archive.
+The second command intentionally creates an unsigned device build for subsequent signing. It does not create a TestFlight archive. Simulator tests use a local ad-hoc signature and synthetic Keychain entitlement so the real secure publisher can be exercised; those simulator-only entitlements are not used for the device IPA. Windows signing must provide the app's normal application identifier and Keychain access entitlement.
 
 ## Recording and privacy
 
