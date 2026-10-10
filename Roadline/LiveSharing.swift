@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import Combine
+import UIKit
 
 struct LiveSnapshot: Encodable {
     struct SharedLeg: Encodable {
@@ -112,6 +113,7 @@ enum SharingKeychain {
     @Published private(set) var busy = false
     @Published private(set) var message = "Sharing is off"
     @Published private(set) var lastSync: Date?
+    var onReady: (() -> Void)?
     private let network: URLSession
     init() {
         let config = URLSessionConfiguration.ephemeral
@@ -122,7 +124,9 @@ enum SharingKeychain {
         if session != nil { message = "Waiting to reconnect" }
     }
     func start(_ trip: Trip) async {
-        guard !busy else { return }; busy = true; defer { busy = false }
+        guard !busy else { return }
+        let lease = SharingBackgroundLease(); busy = true
+        defer { lease.end(); busy = false; onReady?() }
         do {
             if let old = session, old.tripID != trip.id {
                 try await request("DELETE", path: "/api/trips/" + old.id, token: old.writeToken)
@@ -142,7 +146,8 @@ enum SharingKeychain {
     }
     func sync(_ trip: Trip) async {
         guard !busy, session?.tripID == trip.id else { return }
-        busy = true; defer { busy = false }
+        let lease = SharingBackgroundLease(); busy = true
+        defer { lease.end(); busy = false; onReady?() }
         do { try await publish(trip) } catch { message = describe(error) + " Retrying when updates are available." }
     }
     private func publish(_ trip: Trip) async throws {
@@ -158,7 +163,9 @@ enum SharingKeychain {
         message = trip.status == .completed ? "Completed trip shared" : "Live sharing is on"
     }
     func stop() async -> Bool {
-        guard !busy else { return false }; busy = true; defer { busy = false }
+        guard !busy else { return false }
+        let lease = SharingBackgroundLease(); busy = true
+        defer { lease.end(); busy = false; onReady?() }
         do {
             if let s = session { try await request("DELETE", path: "/api/trips/" + s.id, token: s.writeToken) }
             try SharingKeychain.save(nil); session = nil; lastSync = nil; message = "Sharing is off"; return true
@@ -189,4 +196,16 @@ enum SharingKeychain {
 private final class NoRedirect: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+}
+@MainActor private final class SharingBackgroundLease {
+    private var identifier = UIBackgroundTaskIdentifier.invalid
+    init() {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: "Roadline live update") { [weak self] in
+            Task { @MainActor in self?.end() }
+        }
+    }
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier); identifier = .invalid
+    }
 }

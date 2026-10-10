@@ -52,9 +52,8 @@ Fuel-used entry and fuel-added entry are distinct. Tank level and range are esti
 
 ## Validation
 
-`RoadlineTests/JourneyTests.swift` exercises drift rejection, poor accuracy, jumps, gaps, movement, rolling ETA, idle fuel, pause behavior, measured-leg economy, refills, E32 interpolation, persistence, timestamp units, sharing payload privacy and sharing error wording. Hosted build results are the authority for compilation and test status. Real-device GPS, screen lock behavior, accessibility, layout and installation require an iPhone check.
+`RoadlineTests/JourneyTests.swift` exercises drift rejection, poor accuracy, jumps, gaps, movement, rolling ETA, idle fuel, pause behavior, measured-leg economy, refills, E32 interpolation, persistence, timestamp units, sharing payload privacy, explicit unavailable-reading nulls, sharing error wording and corrupt/unreadable file protection. An integration test creates a synthetic trip on the approved live relay, verifies token roles and native updates, then revokes it. Hosted build results are the authority for compilation and test status. The workflow captures native home/dashboard/BMW screenshots using simulator-only synthetic fixtures; that fixture code is excluded from device Release builds. Real-device GPS, screen lock behavior, accessibility and installation still require an iPhone check.
 
 Fonts are distributed under the SIL Open Font License in `Roadline/fonts/Barlow-OFL.txt`. Barlow Condensed approximates the late-1980s cluster reference; it is not the original BMW font. There are no third-party code packages or embedded tracking SDKs.
 
 The Xcode project can be regenerated deterministically with `python3 tools/generate-project.py` after source files are added. That script does not download dependencies.
-

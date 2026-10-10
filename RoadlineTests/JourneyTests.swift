@@ -124,4 +124,26 @@ final class JourneyTests: XCTestCase {
             let revoked = try await request("GET", path, token: view); XCTAssertEqual(revoked.0, 404)
         } catch { _ = try? await request("DELETE", path, token: write); throw error }
     }
+    @MainActor func testReadFailureIsReportedBeforeItCanBeSavedAsAnEmptyHistory() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("roadline-read-test-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let unreadable = directory.appendingPathComponent("journeys.json")
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+        let store = JourneyStore(storageFile: unreadable)
+        XCTAssertNotNil(store.error)
+        store.save()
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unreadable.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+    }
+    @MainActor func testCorruptHistoryRemainsUntouched() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("roadline-corrupt-test-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("journeys.json"), original = Data("unreadable history".utf8)
+        try original.write(to: file)
+        let store = JourneyStore(storageFile: file); XCTAssertNotNil(store.error)
+        store.save(); XCTAssertEqual(try Data(contentsOf: file), original)
+    }
 }

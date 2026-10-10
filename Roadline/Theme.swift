@@ -65,8 +65,8 @@ struct Metric: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: large ? 10 : 6) {
             HStack(alignment: .top, spacing: 5) {
-                Image(systemName: icon).symbolRenderingMode(.hierarchical)
-                Text(label).lineLimit(2).minimumScaleFactor(0.7)
+                if !large { Image(systemName: icon).symbolRenderingMode(.hierarchical) }
+                Text(label).lineLimit(2).minimumScaleFactor(0.5).layoutPriority(1)
                 Spacer(minLength: 0)
                 if action != nil { Image(systemName: "arrow.triangle.2.circlepath").font(.caption2) }
             }.font(style.font(large ? 16 : 13, weight: .medium)).foregroundStyle(style.secondary)

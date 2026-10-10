@@ -56,11 +56,13 @@ import UIKit
     private var lastSave = 0.0
     private var lastSync = 0.0
     private var canPersist = true
-    init() {
-        file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    private var pendingForcedSync = false
+    private var syncScheduled = false
+    init(storageFile: URL? = nil) {
+        file = storageFile ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Roadline/journeys.json")
-        if let data = try? Data(contentsOf: file) {
-            do { state = try JSONDecoder().decode(JourneyState.self, from: data) }
+        if FileManager.default.fileExists(atPath: file.path) {
+            do { state = try JSONDecoder().decode(JourneyState.self, from: Data(contentsOf: file)) }
             catch { state = JourneyState(); canPersist = false; self.error = "Saved journeys could not be read. Your saved file has been retained; recording is disabled until it is recovered." }
         } else { state = JourneyState() }
         #if DEBUG && targetEnvironment(simulator)
@@ -68,6 +70,7 @@ import UIKit
             state = Self.previewState(screen); canPersist = false; error = nil
         }
         #endif
+        sharing.onReady = { [weak self] in if self?.pendingForcedSync == true { self?.tick(force: true) } }
         location.onPoint = { [weak self] point in
             guard let self = self, var trip = self.state.active else { return }
             JourneyEngine.record(point, in: &trip); self.state.active = trip
@@ -135,9 +138,16 @@ import UIKit
     }
     func tick(force: Bool = false) {
         let now = Date().timeIntervalSince1970
-        guard !sharing.busy, force || now - lastSync >= 10, let id = sharing.session?.tripID,
-            let trip = state.active?.id == id ? state.active : state.history.first(where: { $0.id == id }) else { return }
-        lastSync = now; Task { await sharing.sync(trip) }
+        guard let id = sharing.session?.tripID,
+            let trip = state.active?.id == id ? state.active : state.history.first(where: { $0.id == id }) else { pendingForcedSync = false; return }
+        if force { pendingForcedSync = true }
+        guard !sharing.busy, !syncScheduled, pendingForcedSync || now - lastSync >= 10 else { return }
+        pendingForcedSync = false; syncScheduled = true; lastSync = now
+        Task {
+            if sharing.busy { pendingForcedSync = true; syncScheduled = false; return }
+            await sharing.sync(trip); syncScheduled = false
+            if pendingForcedSync { tick(force: true) }
+        }
     }
     func applyScreenPreference() { UIApplication.shared.isIdleTimerDisabled = state.settings.keepScreenOn && state.active?.status == .tracking }
 
