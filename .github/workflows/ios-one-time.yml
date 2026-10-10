@@ -1,0 +1,38 @@
+name: Roadline one-time iOS build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['Roadline/**', 'RoadlineTests/**', 'Roadline.xcodeproj/**', 'build-ios.sh', '.github/workflows/ios-one-time.yml']
+permissions:
+  contents: read
+concurrency:
+  group: roadline-ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record Apple toolchain
+        run: xcodebuild -version
+      - name: Test journey calculations on an iPhone simulator
+        run: bash build-ios.sh test
+      - name: Build the iPhone app for Windows signing
+        run: bash build-ios.sh device
+      - name: Upload iPhone package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Roadline-iOS-1.4.2-unsigned
+          path: build/Roadline-iOS-1.4.2-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Roadline-iOS-tests
+          path: build/test/Logs/Test/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 14

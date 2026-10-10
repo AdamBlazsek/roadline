@@ -1,0 +1,133 @@
+import Foundation
+import Combine
+import CoreLocation
+import UIKit
+
+@MainActor final class LocationRecorder: NSObject, CLLocationManagerDelegate, ObservableObject {
+    private let manager = CLLocationManager()
+    var onPoint: ((RoutePoint) -> Void)?
+    @Published var message = "Location access is needed to record a trip"
+    private var recording = false
+    override init() {
+        super.init(); manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.distanceFilter = kCLDistanceFilterNone
+        manager.activityType = .automotiveNavigation
+        manager.pausesLocationUpdatesAutomatically = false
+        manager.showsBackgroundLocationIndicator = true
+    }
+    func setRecording(_ enabled: Bool) {
+        recording = enabled
+        if !enabled { manager.stopUpdatingLocation(); return }
+        switch manager.authorizationStatus {
+        case .notDetermined: manager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.allowsBackgroundLocationUpdates = true
+            manager.startUpdatingLocation(); message = "GPS recording active"
+        default: message = "Enable Precise Location for Roadline in iPhone Settings"
+        }
+    }
+    func requestBackgroundAccess() { manager.requestAlwaysAuthorization() }
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) { if recording { setRecording(true) } }
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        for location in locations.sorted(by: { $0.timestamp < $1.timestamp }) {
+            guard abs(location.timestamp.timeIntervalSinceNow) < 30 else { continue }
+            onPoint?(RoutePoint(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
+                time: location.timestamp.timeIntervalSince1970, accuracy: location.horizontalAccuracy,
+                speed: location.speed >= 0 ? location.speed : nil))
+        }
+    }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        message = "GPS is temporarily unavailable. Waiting for a fresh reading."
+    }
+}
+
+@MainActor final class JourneyStore: ObservableObject {
+    @Published var state: JourneyState
+    @Published var error: String?
+    let location = LocationRecorder()
+    let sharing = LiveSharing()
+    private let file: URL
+    private var lastSave = 0.0
+    private var lastSync = 0.0
+    private var canPersist = true
+    init() {
+        file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Roadline/journeys.json")
+        if let data = try? Data(contentsOf: file) {
+            do { state = try JSONDecoder().decode(JourneyState.self, from: data) }
+            catch { state = JourneyState(); canPersist = false; self.error = "Saved journeys could not be read. Your saved file has been retained; recording is disabled until it is recovered." }
+        } else { state = JourneyState() }
+        location.onPoint = { [weak self] point in
+            guard let self = self, var trip = self.state.active else { return }
+            JourneyEngine.record(point, in: &trip); self.state.active = trip
+            if Date().timeIntervalSince1970 - self.lastSave >= 5 { self.save() }
+            self.tick()
+        }
+        // A relaunched recording resumes only after location authorization is checked.
+        location.setRecording(state.active?.status == .tracking)
+        applyScreenPreference()
+    }
+    func save() {
+        guard canPersist else { return }
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(state).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            lastSave = Date().timeIntervalSince1970
+        } catch { self.error = "Journeys could not be saved: " + error.localizedDescription }
+    }
+    func start(destination: String, planned: Double?, fuel: Double?) {
+        guard state.active == nil, error == nil else { return }
+        let now = Date().timeIntervalSince1970, s = state.settings
+        state.active = Trip(destination: destination.trimmingCharacters(in: .whitespacesAndNewlines), start: now,
+            legStart: now, prediction: s.prediction, idleRate: s.idleRate, plannedKm: planned,
+            tankCapacity: s.tankCapacity > 0 ? s.tankCapacity : nil,
+            startingFuel: s.tankCapacity > 0 ? fuel.map { min(s.tankCapacity, max(0, $0)) } : nil,
+            referenceEconomy: s.referenceEconomy)
+        save(); location.setRecording(true); applyScreenPreference()
+    }
+    func pause() {
+        guard var trip = state.active, trip.status == .tracking else { return }
+        JourneyEngine.seal(&trip, now: Date().timeIntervalSince1970); trip.status = .paused
+        state.active = trip; location.setRecording(false); save(); applyScreenPreference(); tick(force: true)
+    }
+    func resume() {
+        guard var trip = state.active, trip.status == .paused else { return }
+        trip.legStart = Date().timeIntervalSince1970; trip.status = .tracking; trip.raw = nil; trip.intervals = []
+        state.active = trip; location.setRecording(true); save(); applyScreenPreference(); tick(force: true)
+    }
+    func finish() {
+        guard var trip = state.active else { return }
+        let now = Date().timeIntervalSince1970
+        if trip.status == .tracking { JourneyEngine.seal(&trip, now: now) }
+        trip.status = .completed; trip.end = now
+        state.history.insert(trip, at: 0); state.active = nil
+        location.setRecording(false); save(); applyScreenPreference(); tick(force: true)
+    }
+    func recordFuel(_ liters: Double) {
+        guard var trip = state.active, trip.status == .paused, !trip.legs.isEmpty, liters.isFinite, liters >= 0 else { return }
+        trip.legs[trip.legs.count - 1].fuel = (liters * 100).rounded() / 100
+        state.active = trip; save(); tick(force: true)
+    }
+    func refill(_ liters: Double) -> Bool {
+        guard var trip = state.active, trip.status == .paused, let remaining = trip.fuelRemaining,
+            let capacity = trip.tankCapacity, liters.isFinite, liters > 0, liters <= capacity - remaining + 0.01 else { return false }
+        trip.refills.append(Refill(time: Date().timeIntervalSince1970, liters: (liters * 100).rounded() / 100))
+        state.active = trip; save(); tick(force: true); return true
+    }
+    func remaining(_ km: Double) {
+        guard km.isFinite, km >= 0, var trip = state.active else { return }
+        trip.plannedKm = trip.totalMeters / 1000 + km; state.active = trip; save(); tick(force: true)
+    }
+    func delete(_ trip: Trip) async {
+        if sharing.session?.tripID == trip.id, !(await sharing.stop()) { return }
+        state.history.removeAll { $0.id == trip.id }; save()
+    }
+    func tick(force: Bool = false) {
+        let now = Date().timeIntervalSince1970
+        guard !sharing.busy, force || now - lastSync >= 10, let id = sharing.session?.tripID,
+            let trip = state.active?.id == id ? state.active : state.history.first(where: { $0.id == id }) else { return }
+        lastSync = now; Task { await sharing.sync(trip) }
+    }
+    func applyScreenPreference() { UIApplication.shared.isIdleTimerDisabled = state.settings.keepScreenOn && state.active?.status == .tracking }
+}
