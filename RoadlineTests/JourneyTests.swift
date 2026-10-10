@@ -146,4 +146,36 @@ final class JourneyTests: XCTestCase {
         let store = JourneyStore(storageFile: file); XCTAssertNotNil(store.error)
         store.save(); XCTAssertEqual(try Data(contentsOf: file), original)
     }
+    @MainActor func testNativePublisherKeepsLinkAndQueuesCompletionBehindAnUpdate() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("roadline-publisher-test-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = JourneyStore(storageFile: directory.appendingPathComponent("journeys.json"))
+        var t = trip(Date().timeIntervalSince1970); t.destination = "Roadline iOS native publisher verification"
+        store.state.active = t
+        await store.sharing.start(t)
+        guard let initial = store.sharing.session, initial.confirmed else {
+            XCTFail("Native publisher could not create a live link: " + store.sharing.message)
+            _ = await store.sharing.stop(); return
+        }
+        do {
+            await store.sharing.start(t)
+            XCTAssertTrue(store.sharing.session?.url == initial.url, "Sharing again must keep the friend's URL")
+            store.tick(force: true)
+            await Task.yield()
+            store.finish()
+            for _ in 0..<100 {
+                if store.sharing.message == "Completed trip shared" && !store.sharing.busy { break }
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
+            XCTAssertEqual(store.sharing.message, "Completed trip shared")
+            XCTAssertTrue(store.sharing.session?.url == initial.url)
+            var request = URLRequest(url: URL(string: LiveSharing.origin + "/api/trips/" + initial.id)!)
+            request.setValue("Bearer " + initial.viewToken, forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String, "COMPLETED")
+            let stopped = await store.sharing.stop(); XCTAssertTrue(stopped)
+            XCTAssertNil(store.sharing.session); XCTAssertNil(SharingKeychain.load())
+        } catch { _ = await store.sharing.stop(); throw error }
+    }
 }
