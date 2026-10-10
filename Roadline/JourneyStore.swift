@@ -28,17 +28,22 @@ import UIKit
         }
     }
     func requestBackgroundAccess() { manager.requestAlwaysAuthorization() }
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) { if recording { setRecording(true) } }
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        for location in locations.sorted(by: { $0.timestamp < $1.timestamp }) {
-            guard abs(location.timestamp.timeIntervalSinceNow) < 30 else { continue }
-            onPoint?(RoutePoint(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
-                time: location.timestamp.timeIntervalSince1970, accuracy: location.horizontalAccuracy,
-                speed: location.speed >= 0 ? location.speed : nil))
-        }
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor [weak self] in if self?.recording == true { self?.setRecording(true) } }
     }
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        message = "GPS is temporarily unavailable. Waiting for a fresh reading."
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let points = locations.sorted(by: { $0.timestamp < $1.timestamp }).compactMap { location -> RoutePoint? in
+            guard abs(location.timestamp.timeIntervalSinceNow) < 30 else { return nil }
+            return RoutePoint(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
+                time: location.timestamp.timeIntervalSince1970, accuracy: location.horizontalAccuracy,
+                speed: location.speed >= 0 ? location.speed : nil)
+        }
+        Task { @MainActor [weak self] in for point in points { self?.onPoint?(point) } }
+    }
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        Task { @MainActor [weak self] in
+            self?.message = "GPS is temporarily unavailable. Waiting for a fresh reading."
+        }
     }
 }
 

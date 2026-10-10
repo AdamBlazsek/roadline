@@ -17,7 +17,7 @@ struct Settings: Codable, Equatable {
     var startingFuel = 0.0
     var referenceEconomy = 10.5
 }
-struct RoutePoint: Codable {
+struct RoutePoint: Codable, Sendable {
     var latitude: Double
     var longitude: Double
     var time: Double

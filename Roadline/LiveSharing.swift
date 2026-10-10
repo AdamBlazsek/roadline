@@ -81,19 +81,19 @@ enum SharingKeychain {
 }
 
 @MainActor final class LiveSharing: ObservableObject {
-    static let origin = "https://roadline-live-journeys.fabledduck.chatgpt.site"
+    nonisolated static let origin = "https://roadline-live-journeys.fabledduck.chatgpt.site"
     @Published private(set) var session: SharingSession?
     @Published private(set) var busy = false
     @Published private(set) var message = "Sharing is off"
     @Published private(set) var lastSync: Date?
     private let network: URLSession
     init() {
-        session = SharingKeychain.load()
-        if session != nil { message = "Waiting to reconnect" }
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 25
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         network = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
+        session = SharingKeychain.load()
+        if session != nil { message = "Waiting to reconnect" }
     }
     func start(_ trip: Trip) async {
         guard !busy else { return }; busy = true; defer { busy = false }
