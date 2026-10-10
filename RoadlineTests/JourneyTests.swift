@@ -83,4 +83,45 @@ final class JourneyTests: XCTestCase {
         let message = SharingError.http(404).localizedDescription
         XCTAssertTrue(message.contains("kept")); XCTAssertFalse(message.contains("phone is offline"))
     }
+    func testUnavailableSharingReadingsAndUnmeasuredLegAreExplicitNull() throws {
+        var t = trip(); t.plannedKm = nil; t.tankCapacity = nil; t.startingFuel = nil
+        JourneyEngine.record(point(1000), in: &t); JourneyEngine.seal(&t, now: 1001)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(LiveSnapshot(t, now: 1002))) as? [String: Any])
+        for key in ["recentSpeedKmh", "remainingKm", "etaAt", "rangeKm", "fuelRemaining"] { XCTAssertTrue(json[key] is NSNull, key) }
+        let legs = try XCTUnwrap(json["legs"] as? [[String: Any]])
+        XCTAssertTrue(legs[0]["fuelLiters"] is NSNull)
+    }
+    func testLiveRelayAcceptsNativePayloadTokenRolesUpdatesAndRevocation() async throws {
+        let id = try SharingKeychain.token(), view = try SharingKeychain.token(), write = try SharingKeychain.token()
+        let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15
+        let session = URLSession(configuration: config)
+        func request(_ method: String, _ path: String, body: Data? = nil, token: String? = nil) async throws -> (Int, Data) {
+            var request = URLRequest(url: URL(string: LiveSharing.origin + path)!)
+            request.httpMethod = method; request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+            let (data, response) = try await session.data(for: request)
+            return ((response as! HTTPURLResponse).statusCode, data)
+        }
+        let path = "/api/trips/" + id
+        struct Create: Encodable { var id: String; var viewToken: String; var writeToken: String; var snapshot: LiveSnapshot }
+        let now = Date().timeIntervalSince1970
+        var t = trip(now); t.destination = "Roadline iOS verification"; t.plannedKm = nil
+        let payload = try JSONEncoder().encode(Create(id: id, viewToken: view, writeToken: write, snapshot: LiveSnapshot(t)))
+        do {
+            let created = try await request("POST", "/api/trips", body: payload)
+            XCTAssertEqual(created.0, 201)
+            let read = try await request("GET", path, token: view); XCTAssertEqual(read.0, 200)
+            let data = try XCTUnwrap(JSONSerialization.jsonObject(with: read.1) as? [String: Any])
+            XCTAssertEqual(data["destination"] as? String, t.destination)
+            let wrongRole = try await request("GET", path, token: write); XCTAssertEqual(wrongRole.0, 404)
+            t.status = .paused
+            let update = try await request("PUT", path, body: JSONEncoder().encode(LiveSnapshot(t)), token: write)
+            XCTAssertEqual(update.0, 200)
+            let changed = try await request("GET", path, token: view)
+            XCTAssertEqual((try JSONSerialization.jsonObject(with: changed.1) as? [String: Any])?["status"] as? String, "PAUSED")
+            let deleted = try await request("DELETE", path, token: write); XCTAssertEqual(deleted.0, 200)
+            let revoked = try await request("GET", path, token: view); XCTAssertEqual(revoked.0, 404)
+        } catch { _ = try? await request("DELETE", path, token: write); throw error }
+    }
 }

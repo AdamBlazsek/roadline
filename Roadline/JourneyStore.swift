@@ -63,6 +63,11 @@ import UIKit
             do { state = try JSONDecoder().decode(JourneyState.self, from: data) }
             catch { state = JourneyState(); canPersist = false; self.error = "Saved journeys could not be read. Your saved file has been retained; recording is disabled until it is recovered." }
         } else { state = JourneyState() }
+        #if DEBUG && targetEnvironment(simulator)
+        if let screen = ProcessInfo.processInfo.environment["ROADLINE_PREVIEW"] {
+            state = Self.previewState(screen); canPersist = false; error = nil
+        }
+        #endif
         location.onPoint = { [weak self] point in
             guard let self = self, var trip = self.state.active else { return }
             JourneyEngine.record(point, in: &trip); self.state.active = trip
@@ -70,7 +75,7 @@ import UIKit
             self.tick()
         }
         // A relaunched recording resumes only after location authorization is checked.
-        location.setRecording(state.active?.status == .tracking)
+        location.setRecording(canPersist && state.active?.status == .tracking)
         applyScreenPreference()
     }
     func save() {
@@ -135,4 +140,25 @@ import UIKit
         lastSync = now; Task { await sharing.sync(trip) }
     }
     func applyScreenPreference() { UIApplication.shared.isIdleTimerDisabled = state.settings.keepScreenOn && state.active?.status == .tracking }
+
+    #if DEBUG && targetEnvironment(simulator)
+    private static func previewState(_ screen: String) -> JourneyState {
+        let now = Date().timeIntervalSince1970
+        var state = JourneyState()
+        state.settings.prediction = true
+        if screen == "bmw" { state.settings.palette = .bmw; state.settings.typeface = .bmw }
+        var trip = Trip(destination: "Copenhagen → Aarhus", start: now - 5600, legStart: now - 1180,
+            prediction: true, idleRate: 1.4, plannedKm: 310, tankCapacity: 90, startingFuel: 72, referenceEconomy: 10.5)
+        let points = [RoutePoint(latitude: 55.676, longitude: 12.568, time: now - 5600, accuracy: 3, speed: 27.3),
+                      RoutePoint(latitude: 55.482, longitude: 11.818, time: now - 1180, accuracy: 3, speed: 27.3)]
+        trip.legs = [Leg(number: 1, start: now - 5600, end: now - 1400, meters: 108000, driving: 3600,
+            fuel: 10.78, route: points, predicted: 10.9, idle: 240, rangeFuel: 10.9)]
+        trip.meters = 32600; trip.driving = 1000; trip.predicted = 3.62; trip.rangeFuel = 3.62
+        trip.idle = 55; trip.route = [RoutePoint(latitude: 55.335, longitude: 11.144, time: now, accuracy: 3, speed: 27.3)]
+        trip.raw = trip.route.last; trip.intervals = [SpeedInterval(start: now - 300, end: now, meters: 8200)]
+        if screen == "home" { JourneyEngine.seal(&trip, now: now); trip.status = .completed; trip.end = now; state.history = [trip] }
+        else { state.active = trip }
+        return state
+    }
+    #endif
 }

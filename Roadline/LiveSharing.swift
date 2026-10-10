@@ -2,10 +2,17 @@ import Foundation
 import Security
 import Combine
 
-struct LiveSnapshot: Codable {
-    struct SharedLeg: Codable {
+struct LiveSnapshot: Encodable {
+    struct SharedLeg: Encodable {
         var number: Int; var distanceKm: Double; var averageSpeedKmh: Double
         var driveMillis: Double; var fuelLiters: Double?
+        enum CodingKeys: String, CodingKey { case number, distanceKm, averageSpeedKmh, driveMillis, fuelLiters }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(number, forKey: .number); try c.encode(distanceKm, forKey: .distanceKm)
+            try c.encode(averageSpeedKmh, forKey: .averageSpeedKmh); try c.encode(driveMillis, forKey: .driveMillis)
+            try c.encode(fuelLiters, forKey: .fuelLiters)
+        }
     }
     var destination: String; var status: String; var distanceKm: Double; var averageSpeedKmh: Double
     var recentSpeedKmh: Double?; var driveMillis: Double; var totalMillis: Double; var remainingKm: Double?
@@ -13,6 +20,25 @@ struct LiveSnapshot: Codable {
     var updatedAt: Double; var predictionEnabled: Bool; var estimatedFuelUsed: Double?
     var averageConsumption: Double?; var currentSpeedKmh: Double?; var currentConsumption: Double?
     var currentConsumptionUnit: String?; var legs: [SharedLeg]
+    enum CodingKeys: String, CodingKey {
+        case destination, status, distanceKm, averageSpeedKmh, recentSpeedKmh, driveMillis, totalMillis
+        case remainingKm, etaAt, rangeKm, fuelRemaining, fuelUsed, updatedAt, predictionEnabled
+        case estimatedFuelUsed, averageConsumption, currentSpeedKmh, currentConsumption, currentConsumptionUnit, legs
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(destination, forKey: .destination); try c.encode(status, forKey: .status)
+        try c.encode(distanceKm, forKey: .distanceKm); try c.encode(averageSpeedKmh, forKey: .averageSpeedKmh)
+        // The relay requires explicit JSON null for unavailable readings, not omitted keys.
+        try c.encode(recentSpeedKmh, forKey: .recentSpeedKmh); try c.encode(driveMillis, forKey: .driveMillis)
+        try c.encode(totalMillis, forKey: .totalMillis); try c.encode(remainingKm, forKey: .remainingKm)
+        try c.encode(etaAt, forKey: .etaAt); try c.encode(rangeKm, forKey: .rangeKm)
+        try c.encode(fuelRemaining, forKey: .fuelRemaining); try c.encode(fuelUsed, forKey: .fuelUsed)
+        try c.encode(updatedAt, forKey: .updatedAt); try c.encode(predictionEnabled, forKey: .predictionEnabled)
+        try c.encode(estimatedFuelUsed, forKey: .estimatedFuelUsed); try c.encode(averageConsumption, forKey: .averageConsumption)
+        try c.encode(currentSpeedKmh, forKey: .currentSpeedKmh); try c.encode(currentConsumption, forKey: .currentConsumption)
+        try c.encode(currentConsumptionUnit, forKey: .currentConsumptionUnit); try c.encode(legs, forKey: .legs)
+    }
     init(_ trip: Trip, now: Double = Date().timeIntervalSince1970) {
         destination = String(trip.destination.prefix(160)); status = trip.status.rawValue
         distanceKm = trip.totalMeters / 1000; averageSpeedKmh = trip.averageSpeed

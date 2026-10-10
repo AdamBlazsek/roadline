@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['Roadline/**', 'RoadlineTests/**', 'Roadline.xcodeproj/**', 'build-ios.sh', '.github/workflows/ios-one-time.yml']
+    paths: ['Roadline/**', 'RoadlineTests/**', 'Roadline.xcodeproj/**', 'build-ios.sh', 'tools/capture-previews.sh', '.github/workflows/ios-one-time.yml']
 permissions:
   contents: read
 concurrency:
@@ -21,6 +21,15 @@ jobs:
         run: bash build-ios.sh test
       - name: Build the iPhone app for Windows signing
         run: bash build-ios.sh device
+      - name: Capture native simulator previews
+        run: bash tools/capture-previews.sh
+      - name: Upload native previews
+        uses: actions/upload-artifact@v4
+        with:
+          name: Roadline-iOS-previews
+          path: build/previews/*.png
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload iPhone package
         uses: actions/upload-artifact@v4
         with:
